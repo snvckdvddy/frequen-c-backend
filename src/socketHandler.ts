@@ -83,6 +83,13 @@ export function setupSocketHandlers(io: Server): void {
 
         const queueRows = getOrderedQueue(sessionId);
 
+        // Get pending tracks for Spotlight mode
+        const pendingRows = db.prepare(`
+          SELECT * FROM queue_tracks
+          WHERE session_id = ? AND status = 'pending'
+          ORDER BY position ASC
+        `).all(sessionId) as any[];
+
         const recentChat = db.prepare(
           'SELECT * FROM chat_messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT 50'
         ).all(sessionId) as any[];
@@ -99,6 +106,7 @@ export function setupSocketHandlers(io: Server): void {
           })),
           currentTrack: currentTrack ? formatQueueTrack(currentTrack) : null,
           queue: queueRows.map(formatQueueTrack),
+          suggestedQueue: pendingRows.map(formatQueueTrack),
           chat: recentChat.reverse().map((m: any) => ({
             id: m.id,
             userId: m.user_id,
@@ -165,8 +173,14 @@ export function setupSocketHandlers(io: Server): void {
         // Increment user's tracks_added
         db.prepare('UPDATE users SET tracks_added = tracks_added + 1 WHERE id = ?').run(socket.userId);
 
-        // Broadcast updated queue
+        // Broadcast updated queue (approved tracks only)
         broadcastQueue(io, sessionId);
+
+        // Spotlight mode: notify room that a track is pending approval
+        if (status === 'pending') {
+          const pendingRow = db.prepare('SELECT * FROM queue_tracks WHERE id = ?').get(trackId) as any;
+          io.to(sessionId).emit('track-pending', { track: formatQueueTrack(pendingRow) });
+        }
 
         // If this is the first track and no current track, set it as current
         const currentTrack = db.prepare(
@@ -215,6 +229,12 @@ export function setupSocketHandlers(io: Server): void {
 
     // ─── Skip Track ──────────────────────────────────────────
     socket.on('skip-track', ({ sessionId }: { sessionId: string }) => {
+      // Spotlight mode: only host can skip
+      const session = db.prepare('SELECT host_id, room_mode FROM sessions WHERE id = ?').get(sessionId) as any;
+      if (session?.room_mode === 'spotlight' && session.host_id !== socket.userId) {
+        socket.emit('error', { message: 'Only the host can skip in Spotlight mode' });
+        return;
+      }
       advanceTrack(io, sessionId);
     });
 
