@@ -18,10 +18,10 @@ router.get('/callback', async (req, res) => {
         return;
     }
 
-    const userId = state as string;
-    const clientId = 'A6P1OlzNLYo7LrMcTA2TaGWVzM6RHgbw';
-    const clientSecret = 'CtC4AzYKu9qUwOvzGLOoAD2ngOsDYBma';
-    const redirectUri = 'http://localhost:5000/api/auth/soundcloud/callback';
+    const userId = state as string; // We passed the JWT/user ID in the state parameter
+    const clientId = process.env.SOUNDCLOUD_CLIENT_ID || 'A6P1OlzNLYo7LrMcTA2TaGWVzM6RHgbw';
+    const clientSecret = process.env.SOUNDCLOUD_CLIENT_SECRET || '';
+    const redirectUri = process.env.SOUNDCLOUD_REDIRECT_URI || 'http://localhost:5000/api/auth/soundcloud/callback';
 
     try {
         const params = new URLSearchParams();
@@ -31,6 +31,7 @@ router.get('/callback', async (req, res) => {
         params.append('redirect_uri', redirectUri);
         params.append('code', code as string);
 
+        // Exchange code for token
         const tokenRes = await fetch('https://api.soundcloud.com/oauth2/token', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -48,12 +49,14 @@ router.get('/callback', async (req, res) => {
         const accessToken = tokenData.access_token;
         const refreshToken = tokenData.refresh_token;
 
+        // Save tokens to DB
         db.prepare(`
       UPDATE users 
       SET soundcloud_access_token = ?, soundcloud_refresh_token = ?
       WHERE id = ?
     `).run(accessToken, refreshToken, userId);
 
+        // Redirect back to mobile app
         res.redirect('frequenc://auth-success?service=soundcloud');
     } catch (err) {
         console.error('SoundCloud callback error:', err);
@@ -61,7 +64,8 @@ router.get('/callback', async (req, res) => {
     }
 });
 
-// 2. GET /api/auth/soundcloud/search
+// 2. GET /api/auth/soundcloud/searchproxy
+// Useful to proxy search if SC CORS prevents direct fetch from mobile (often true for SC)
 router.get('/search', async (req, res) => {
     const q = req.query.q as string;
     const userId = (req as any).userId;
@@ -86,16 +90,17 @@ router.get('/search', async (req, res) => {
 
         if (!scRes.ok) throw new Error(await scRes.text());
 
+        // Process and return matching our Track type format
         const data = await scRes.json() as any[];
 
         const tracks = data.map((t: any) => ({
             id: t.id.toString(),
             title: t.title,
             artist: t.user?.username || 'Unknown Artist',
-            album: '',
+            album: '', // SC tracks don't always have albums mapped easily
             albumArt: t.artwork_url || t.user?.avatar_url,
-            previewUrl: t.stream_url,
-            duration: Math.floor(t.duration / 1000),
+            previewUrl: t.stream_url, // SC gives stream URL!
+            duration: Math.floor(t.duration / 1000), // ms to s
             source: 'soundcloud',
             sourceId: t.id.toString()
         }));
@@ -108,6 +113,7 @@ router.get('/search', async (req, res) => {
 });
 
 // 3. GET /api/auth/soundcloud/stream/:id
+// Gets fresh stream URL
 router.get('/stream/:id', async (req, res) => {
     const { id } = req.params;
     const userId = (req as any).userId;
@@ -118,6 +124,7 @@ router.get('/stream/:id', async (req, res) => {
         return;
     }
 
+    // Usually SC stream url requires auth attached
     const streamUrl = `https://api.soundcloud.com/tracks/${id}/stream?oauth_token=${user.soundcloud_access_token}`;
     res.json({ url: streamUrl });
 });

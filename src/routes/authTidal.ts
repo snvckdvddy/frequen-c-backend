@@ -14,8 +14,8 @@ router.post('/exchange', requireAuth, async (req: Request, res: Response) => {
         return;
     }
 
-    const clientId = 'zvU13xkVZYA7JNR2';
-    const clientSecret = 'jcVLVCOxNAf7Q887oipzyloakhDVGZswdiHKKmW2wgU=';
+    const clientId = process.env.TIDAL_CLIENT_ID || 'zvU13xkVZYA7JNR2';
+    const clientSecret = process.env.TIDAL_CLIENT_SECRET || '';
 
     try {
         const params = new URLSearchParams();
@@ -84,7 +84,7 @@ router.get('/search', requireAuth, async (req, res) => {
             artist: t.artists?.map((a: any) => a.name).join(', ') || 'Unknown Artist',
             album: t.album?.title || '',
             albumArt: t.album?.cover ? `https://resources.tidal.com/images/${t.album.cover.replace(/-/g, '/')}/320x320.jpg` : undefined,
-            previewUrl: '',
+            previewUrl: '', // Fetched freshly just-in-time for playback via getStreamUrl
             duration: t.duration,
             source: 'tidal',
             sourceId: t.id.toString()
@@ -109,6 +109,7 @@ router.get('/stream/:id', requireAuth, async (req, res) => {
     }
 
     try {
+        // Generate stream URL with Tidal API
         const streamRes = await fetch(`https://openapi.tidal.com/tracks/${id}/playbackinfopostpaywall?audioquality=HIGH&playbackmode=STREAM&assetpresentation=FULL`, {
             headers: {
                 Authorization: `Bearer ${user.tidal_access_token}`
@@ -118,6 +119,8 @@ router.get('/stream/:id', requireAuth, async (req, res) => {
         if (!streamRes.ok) throw new Error(await streamRes.text());
 
         const streamData = await streamRes.json() as any;
+        // Extract the raw URL since it returns a manifest object often for DASH/HLS
+        // Using simple URL if provided, otherwise the manifest URI.
         res.json({ url: streamData.url || streamData.manifest || '' });
     } catch (e: any) {
         res.status(500).json({ message: e.message || 'Error fetching stream URL from Tidal' });
