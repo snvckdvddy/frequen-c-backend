@@ -12,11 +12,18 @@ const LASTFM_SHARED_SECRET = process.env.LASTFM_SHARED_SECRET || '';
  * Generate Last.fm API signature
  */
 function createLastfmSignature(params: Record<string, string>): string {
+    // 1. Order parameters alphabetically by key (excluding 'format' and 'callback')
     const sortedKeys = Object.keys(params)
         .filter((k) => k !== 'format' && k !== 'callback')
         .sort();
+
+    // 2. Concatenate key and value
     const paramString = sortedKeys.map((k) => `${k}${params[k]}`).join('');
+
+    // 3. Append secret
     const sigRaw = `${paramString}${LASTFM_SHARED_SECRET}`;
+
+    // 4. MD5 hash
     return crypto.createHash('md5').update(sigRaw, 'utf8').digest('hex');
 }
 
@@ -26,7 +33,7 @@ function createLastfmSignature(params: Record<string, string>): string {
  */
 router.post('/exchange', requireAuth, async (req: Request, res: Response) => {
     const { token } = req.body;
-    const userId = (req as any).user.id;
+    const userId = (req as any).userId;
 
     if (!token) {
         return res.status(400).json({ message: 'Missing token' });
@@ -67,6 +74,7 @@ router.post('/exchange', requireAuth, async (req: Request, res: Response) => {
 
         const userRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as any;
 
+        // Quick format
         const formattedUser = {
             id: userRow.id,
             username: userRow.username,
